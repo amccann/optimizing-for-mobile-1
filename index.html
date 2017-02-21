@@ -1,0 +1,434 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+  <title>reveal.js</title>
+
+  <link rel="stylesheet" href="css/reveal.css">
+  <link rel="stylesheet" href="css/theme/black.css">
+
+  <!-- Theme used for syntax highlighting of code -->
+  <link rel="stylesheet" href="lib/css/zenburn.css">
+  <link rel="stylesheet" href="lib/css/vis.min.css">
+
+  <!-- Printing and PDF exports -->
+  <script>
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.type = 'text/css';
+    link.href = window.location.search.match(/print-pdf/gi) ? 'css/print/pdf.css' : 'css/print/paper.css';
+    document.getElementsByTagName('head')[0].appendChild(link);
+  </script>
+</head>
+<body>
+<div class="reveal">
+  <div class="slides">
+    <section>
+      <h2>Optimizing for Mobile</h2>
+      <p>
+        <small>Andrew McCann / February 2017 </small>
+      </p>
+    </section>
+
+    <section>
+      <section>
+        <h2>Constraints</h2>
+      </section>
+      <section>
+        <h3> Slow/Non-Existent Internet Connection </h3>
+      </section>
+      <section>
+        <h3> Expectation of App vs Web Page </h3>
+        <ul>
+          <li> Web Pages can be Quirky</li>
+          <li> Apps are expected to be polished </li>
+        </ul>
+        <aside class="notes">
+          - People expect web pages to have some quirks when running on their mobile devices
+          <br>
+          - Native apps tend to hide most of these quirks
+          <br>
+          - Example of something you can get away with on a webpage but not mobile
+          <br>
+          - Image thumbnails
+        </aside>
+      </section>
+      <section>
+        <h3> Limited Processing Power </h3>
+        <ul>
+          <li> <emphasis>Modern</emphasis> mobile JS performance is years behind PCs</li>
+          <li> Must also support non-modern mobile devices </li>
+        </ul>
+      </section>
+      <section>
+        <h3> Ember renders slowly </h3>
+        <aside class="notes">
+          - Glimmer 2.0 was optimized for compatibility, performance upgrades to come
+        </aside>
+      </section>
+    </section>
+    <section>
+      <section>
+        <h2>Our Solutions*</h2>
+        <p>
+          <small> * Focusing this talk on Performance </small>
+        </p>
+      </section>
+    </section>
+
+    <section>
+      <section>
+        <h3> 1. Make it <emphasis>feel</emphasis> more performant </h3>
+      </section>
+
+      <section>
+        <h3>`wait-for` component</h3>
+      </section>
+      <section class="ember-example">
+        <h4>`wait-for` component</h4>
+        <hr>
+        <div class="left-column">
+          <pre class="componentjs"><code data-trim>
+// -- Simlified version of `wait-for` -- //
+import Ember from 'ember';
+
+// ...
+
+const WaitFor = Ember.Component.extend({
+  tagName: '',
+
+  didReceiveAttrs(attrs) {
+    const promisedAttrs = attrs.newAttrs.promised;
+
+    set(this, 'isLoading', true);
+    set(this, 'waitingFor', promisedAttrs);
+
+    allSettled(promisedAttrs).then(() => {
+      //Make sure that we've settled the most recent attributes passed in.
+      const waitingFor = get(this, 'waitingFor');
+
+      if (waitingFor === attrs.newAttrs.promised) {
+        set(this, 'isLoading', false);
+      }
+
+    });
+  },
+});
+
+WaitFor.reopenClass({
+  positionalParams: 'promised',
+});
+
+export default WaitFor;
+          </code></pre>
+          <pre class="templatehbs hide"><code data-trim>
+{{#if isLoading}}
+  {{loading-overlay theme="white"}}
+{{/if}}
+{{yield}}
+
+<!-- ==================================== -->
+
+<!-- Usage
+  {{#wait-for promiseItem1 promiseItem2}}
+      {{! ... Do things ... }}
+  {{/wait-for}}
+-->
+          </code></pre>
+        </div>
+        <div class="right-column">
+          <iframe src="http://localhost:4200/#" width="375" height="568"></iframe>
+        </div>
+      </section>
+      <section>
+        <h3>`wait-for-render` component</h3>
+      </section>
+      <section>
+        <h4>`wait-for-render` component</h4>
+        <hr>
+        <p style="text-align:left; padding-left: 60px;"> Important Notes </p>
+        <ul>
+          <li> How do route transitions render Animations?</li>
+          <li> What is considered "acceptable" input lag? </li>
+        </ul>
+      </section>
+      <section class="ember-example">
+        <h4>`wait-for-render` component</h4>
+        <hr>
+        <div class="left-column">
+          <pre class="componentjs"><code data-trim>
+// -- Simlified version of `wait-for-render` -- //
+
+import Ember from 'ember';
+
+// ...
+
+const DEFAULT_ANIMATION_TIME = 300;
+
+export default Component.extend({
+  tagName: '',
+
+  hasRenderedOnce: false,
+  hasRenderedChild: false,
+  delay: DEFAULT_ANIMATION_TIME,
+
+  timeoutLength: computed(/* ... */),
+
+  shouldScheduleRenderCheck: computed('hasRenderedOnce', 'hasRenderedChild', function() {
+    const hasRenderedOnce = get(this, 'hasRenderedOnce');
+    const hasRenderedChild = get(this, 'hasRenderedChild');
+
+    return hasRenderedOnce && !hasRenderedChild;
+  }),
+
+  init() {
+    this._super(...arguments);
+    this.scheduleRenderCheck();
+  },
+
+  scheduleRenderCheck() {
+    const renderCheck = get(this, 'renderCheck');
+
+    schedule('afterRender', this, renderCheck);
+  },
+
+  renderCheck() {
+    const hasRenderedOnce = get(this, 'hasRenderedOnce');
+    const timeoutLength = get(this, 'timeoutLength');
+
+    if (hasRenderedOnce) {
+      set(this, 'hasRenderedChild', true);
+    } else {
+      later(() => {
+        set(this, 'hasRenderedOnce', true);
+      }, timeoutLength);
+    }
+  },
+
+  didRender() {
+    const shouldScheduleRenderCheck = get(this, 'shouldScheduleRenderCheck');
+
+    if (shouldScheduleRenderCheck) {
+      this.scheduleRenderCheck();
+    }
+  },
+});
+          </code></pre>
+          <pre class="templatehbs hide"><code data-trim>
+{{#if hasRenderedOnce}}
+  {{yield}}
+{{/if}}
+
+{{#unless hasRenderedChild}}
+  {{loading-overlay theme="white"}}
+{{/unless}}
+
+
+<!-- ==================================== -->
+
+<!-- Usage
+  {{#wait-for-render delay=400}}
+    {{! ... Complex DOM markup ... }}
+  {{/wait-for-render}}
+-->
+          </code></pre>
+        </div>
+        <div class="right-column">
+          <iframe src="http://localhost:4200/#" width="375" height="568"></iframe>
+        </div>
+      </section>
+    </section>
+
+    <section>
+      <section>
+        <h3> 2. Make it more Performant </h3>
+      </section>
+      <section>
+        <h3> Options: </h3>
+        <ul>
+          <li> Inject strings using `innerHTML` for large lists </li>
+          <li> Limit list size to <30 </li>
+          <li> Render <emphasis>only</emphasis> what you see </li>
+        </ul>
+      </section>
+      <section>
+        <h3> Smoke and Mirrors </h3>
+        <p>
+          <small><a href="https://github.com/runspired/smoke-and-mirrors">https://github.com/runspired/smoke-and-mirrors</a></small>
+        </p>
+        <ul>
+          <li> Has a few specific bugs we're waiting to be fixed </li>
+          <li> Now has a dedicated team trying to get it to v1.0</li>
+          <li> Worth following it's progress </li>
+        </ul>
+      </section>
+      <section>
+        <h3> How does it work? </h3>
+      </section>
+
+      <section>
+        <h3> Example </h3>
+      </section>
+    </section>
+
+    <section>
+      <h3>Questions & Discussion</h3>
+    </section>
+  </div>
+</div>
+
+<script src="lib/js/head.min.js"></script>
+<script src="lib/js/vis.min.js"></script>
+<script src="js/reveal.js"></script>
+<script src="node_modules/moment/moment.js"></script>
+<script src="node_modules/chart.js/dist/Chart.js"></script>
+
+<script>
+  // More info https://github.com/hakimel/reveal.js#configuration
+  Reveal.initialize({
+    history: true,
+    slideNumber: true,
+
+    // More info https://github.com/hakimel/reveal.js#dependencies
+    dependencies: [
+      {src: 'plugin/markdown/marked.js'},
+      {src: 'plugin/markdown/markdown.js'},
+      {src: 'plugin/notes/notes.js', async: true},
+      {
+        src: 'plugin/highlight/highlight.js', async: true, callback: function() {
+        hljs.initHighlightingOnLoad();
+      }
+      },
+    ]
+  });
+</script>
+<style>
+  body {
+    background-color: rgb(55, 71, 79);
+    font-family: Oswald;
+  }
+
+  .left-column {
+    float: left;
+    width: 50%;
+  }
+
+  .right-column {
+    float: right;
+    width: 50%;
+  }
+
+  .ember-example .left-column {
+    width: 65%;
+    height: 568px;
+  }
+
+  .ember-example .right-column {
+    width: 35%;
+    height: 568px;
+  }
+
+  .ember-example .hide {
+    display: none;
+  }
+
+  .reveal pre code {
+    max-height: 568px;
+    padding-bottom: 0px;
+    padding-top: 0px;
+  }
+
+  .reveal .ember-example pre {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .reveal .ember-example pre code {
+    height: 100%;
+  }
+
+  .reveal .ember-example iframe {
+    max-height: 100%;
+    max-width: 100%;
+  }
+
+  .reveal emphasis {
+    font-style: italic;
+    color: lightgoldenrodyellow;
+  }
+
+  .footer {
+    position: absolute;
+    left: 35%;
+    bottom: 1em;
+  }
+
+  .task-section {
+
+  }
+
+  .task-list {
+
+  }
+
+  .task-header {
+
+  }
+
+  .task-list .task {
+    font-size: 20px;
+  }
+
+  .task-list ul .task {
+    font-size: 16px;
+    font-style: italic;
+  }
+
+  .task-list .task--released {
+  }
+
+  .task-list .task--complete {
+  }
+
+  .task-list .task--partial {
+  }
+
+  .task-list .task--incomplete {
+  }
+</style>
+<script>
+  document.querySelectorAll('.ember-example .templatehbs').forEach(function(el) {
+    el.addEventListener('click', onTemplateClick, true);
+  });
+
+  document.querySelectorAll('.ember-example .componentjs').forEach(function(el) {
+    el.addEventListener('click', onComponentClick, true);
+  });
+
+  function onTemplateClick() {
+    const $template = this;
+    const $component = $template.parentNode.querySelector('.componentjs');
+
+    if($component) {
+      $component.classList.remove('hide');
+      $template.classList.add('hide');
+    }
+  }
+
+  function onComponentClick() {
+    const $component = this;
+    const $template = $component.parentNode.querySelector('.templatehbs');
+
+    if($template) {
+      $component.classList.add('hide');
+      $template.classList.remove('hide');
+    }
+  }
+
+</script>
+</body>
+</html>
